@@ -1,0 +1,76 @@
+// Copyright 2023 Tencent
+// SPDX-License-Identifier: BSD-3-Clause
+
+#version 450
+
+layout(constant_id = 0) const int fast_gelu = 0;
+
+#define shape_constant_id_offset 1
+layout(constant_id = shape_constant_id_offset + 0) const uint n = 0;
+
+layout(binding = 0) buffer bottom_top_blob { sfpvec4 bottom_top_blob_data[]; };
+
+layout(push_constant) uniform parameter
+{
+    uint n;
+} p;
+
+// Match the piecewise Cephes erf approximation used by the ncnn CPU SIMD
+// implementations. This preserves exact-GELU semantics when fast_gelu == 0.
+afpvec4 erf_cephes(afpvec4 a)
+{
+    afpvec4 t = abs(a);
+    afpvec4 s = a * a;
+
+    afpvec4 r_large = afpvec4(-1.72853470e-5f) * t + afpvec4(3.83197126e-4f);
+    afpvec4 u = afpvec4(-3.88396438e-3f) * t + afpvec4(2.42546219e-2f);
+    r_large = r_large * s + u;
+    r_large = r_large * t + afpvec4(-1.06777877e-1f);
+    r_large = r_large * t + afpvec4(-6.34846687e-1f);
+    r_large = r_large * t + afpvec4(-1.28717512e-1f);
+    r_large = r_large * t - t;
+    r_large = afpvec4(1.0f) - exp(r_large);
+    r_large = mix(r_large, -r_large, lessThan(a, afpvec4(0.0f)));
+
+    afpvec4 r_small = afpvec4(-5.96761703e-4f);
+    r_small = r_small * s + afpvec4(4.99119423e-3f);
+    r_small = r_small * s + afpvec4(-2.67681349e-2f);
+    r_small = r_small * s + afpvec4(1.12819925e-1f);
+    r_small = r_small * s + afpvec4(-3.76125336e-1f);
+    r_small = r_small * s + afpvec4(1.28379166e-1f);
+    r_small = r_small * a + a;
+
+    return mix(
+        r_small,
+        r_large,
+        greaterThan(t, afpvec4(0.927734375f))
+    );
+}
+
+void main()
+{
+    uint gi = gl_GlobalInvocationID.x;
+
+    if (gi >= psc(n))
+        return;
+
+    afpvec4 v = buffer_ld4(bottom_top_blob_data, gi);
+
+    if (fast_gelu != 0)
+    {
+        // y = 0.5x * (1 + tanh(sqrt(2/Pi) * (x + 0.044715x^3)))
+#if NCNN_moltenvk
+        v = afpvec4(0.5f) * v * (afpvec4(1.0f) + afpvec4(tanh(vec4(afpvec4(0.79788452f) * (v + afpvec4(0.044715f) * v * v * v)))));
+#else
+        v = afpvec4(0.5f) * v * (afpvec4(1.0f) + tanh(afpvec4(0.79788452f) * (v + afpvec4(0.044715f) * v * v * v)));
+#endif
+    }
+    else
+    {
+        // y = 0.5x * (1 + erf(x / sqrt(2)))
+        v = afpvec4(0.5f) * v *
+            (afpvec4(1.0f) + erf_cephes(afpvec4(0.70710678f) * v));
+    }
+
+    buffer_st4(bottom_top_blob_data, gi, v);
+}
