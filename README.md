@@ -16,8 +16,46 @@
 | 动态 Prompt | 根据实际 token 数在运行时构造 RoPE、Attention Mask 和联合序列 |
 | 动态分辨率 | 运行时生成 latent、图像 token、RoPE 和 VAE shape，宽高可分别设置 |
 | 可重复生成 | 提供官方 seed=42 reference 模式和支持任意 seed 的 portable 模式 |
-| Turbo 去噪 | 按官方 FlowMatch 配置执行 8 个去噪步骤 |
+| Turbo 加速 | 使用 ERNIE-Image-Turbo，按官方 FlowMatch 配置仅需 8 个去噪步骤 |
 | 完整 C++ 链路 | 串联 Tokenizer、Text Encoder、DiT、Scheduler、VAE 和 PNG 写出 |
+
+## 生成效果
+
+以下图片均由本项目正式 CLI 使用 Vulkan 后端、8-step Turbo 推理和 `portable seed=123` 生成。
+
+### 多语言 Prompt
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="assets/report/08_cli_zh_1024_seed123.png" alt="中文提示词生成效果" width="100%"><br>
+      <sub>中文 · 1024×1024</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/report/09_cli_en_1024_seed123_run1.png" alt="英文提示词生成效果" width="100%"><br>
+      <sub>英文 · 1024×1024</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/report/10_cli_ja_1024_seed123.png" alt="日文提示词生成效果" width="100%"><br>
+      <sub>日文 · 1024×1024</sub>
+    </td>
+  </tr>
+</table>
+
+### 动态分辨率
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/report/11_cli_zh_1376x768_seed123.png" alt="1376×768 横向生成效果" width="100%"><br>
+      <sub>横图 · 1376×768</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/report/12_cli_zh_768x1376_seed123.png" alt="768×1376 竖向生成效果" width="56%"><br>
+      <sub>竖图 · 768×1376</sub>
+    </td>
+  </tr>
+</table>
 
 ## 🧩 环境要求
 
