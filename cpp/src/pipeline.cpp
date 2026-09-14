@@ -17,11 +17,8 @@ void validate_generation_config(const GenerationConfig& config) {
     if (config.batch_size != 1) {
         throw std::invalid_argument("first C++ runtime requires batch_size=1");
     }
-    if (config.width != 1024 || config.height != 1024) {
-        throw std::invalid_argument(
-            "first C++ runtime requires resolution 1024x1024"
-        );
-    }
+    const ImageGeometry geometry =
+        make_image_geometry(config.width, config.height);
     if (config.num_inference_steps != kNumInferenceSteps) {
         throw std::invalid_argument("first C++ runtime requires 8 steps");
     }
@@ -35,13 +32,19 @@ void validate_generation_config(const GenerationConfig& config) {
             "Prompt Enhancer is disabled in the first C++ runtime"
         );
     }
-    if (config.initial_latent_mode ==
-            InitialLatentMode::OfficialReference &&
-        config.seed != kOfficialReferenceSeed) {
-        throw std::invalid_argument(
-            "reference RNG mode supports only seed=42; use portable RNG "
-            "mode explicitly for arbitrary seeds"
-        );
+    if (config.initial_latent_mode == InitialLatentMode::OfficialReference) {
+        if (config.seed != kOfficialReferenceSeed) {
+            throw std::invalid_argument(
+                "reference RNG mode supports only seed=42; use portable RNG "
+                "mode explicitly for arbitrary seeds"
+            );
+        }
+        if (geometry.width != kImageWidth || geometry.height != kImageHeight) {
+            throw std::invalid_argument(
+                "reference RNG mode supports only resolution 1024x1024; "
+                "use portable RNG mode for dynamic resolutions"
+            );
+        }
     }
 }
 
@@ -181,6 +184,16 @@ VaeDecodeResult ErnieImagePipeline::decode_vae(
     return impl_->vae_decoder->decode(packed_latent);
 }
 
+VaeDecodeResult ErnieImagePipeline::decode_vae(
+    const HostTensor& packed_latent,
+    const ImageGeometry& geometry
+) const {
+    if (!loaded()) {
+        throw std::logic_error("Pipeline must be loaded before decode_vae");
+    }
+    return impl_->vae_decoder->decode(packed_latent, geometry);
+}
+
 GenerationResult ErnieImagePipeline::generate(
     const GenerationRequest& request,
     const DitDenoiseStepCallback& on_step
@@ -193,6 +206,9 @@ GenerationResult ErnieImagePipeline::generate(
         throw std::invalid_argument("generation output path must not be empty");
     }
 
+    const ImageGeometry geometry = make_image_geometry(
+        request.config.width, request.config.height
+    );
     const auto total_started = std::chrono::steady_clock::now();
     auto started = std::chrono::steady_clock::now();
     PreparedPrompt prompt = prepare_prompt(request.prompt);
@@ -204,7 +220,8 @@ GenerationResult ErnieImagePipeline::generate(
     result.height = request.config.height;
     result.num_inference_steps = request.config.num_inference_steps;
     result.text_length = prompt.text_length;
-    result.sequence_length = prompt.sequence_length;
+    result.image_tokens = geometry.image_tokens;
+    result.sequence_length = geometry.image_tokens + prompt.text_length;
     result.prompt_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - started
     ).count();
@@ -212,7 +229,8 @@ GenerationResult ErnieImagePipeline::generate(
     InitialLatentResult initial =
         impl_->initial_latent->create(
             request.config.seed,
-            request.config.initial_latent_mode
+            request.config.initial_latent_mode,
+            geometry
         );
     result.initial_latent_policy = initial.policy;
     result.initial_latent_seconds = initial.load_seconds;
@@ -226,6 +244,7 @@ GenerationResult ErnieImagePipeline::generate(
         std::move(prompt.text_embeddings);
     denoise_inputs.start_step = 0;
     denoise_inputs.num_inference_steps = request.config.num_inference_steps;
+    denoise_inputs.geometry = geometry;
 
     started = std::chrono::steady_clock::now();
     DitDenoiseResult denoised =
@@ -236,7 +255,7 @@ GenerationResult ErnieImagePipeline::generate(
 
     started = std::chrono::steady_clock::now();
     VaeDecodeResult decoded =
-        impl_->vae_decoder->decode(denoised.final_sample);
+        impl_->vae_decoder->decode(denoised.final_sample, geometry);
     result.vae_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - started
     ).count();

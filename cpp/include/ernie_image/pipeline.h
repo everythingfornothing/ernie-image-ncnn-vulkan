@@ -47,6 +47,7 @@ struct GenerationResult {
     int height = 0;
     int num_inference_steps = 0;
     int text_length = 0;
+    int image_tokens = 0;
     int sequence_length = 0;
     std::string initial_latent_policy;
     double prompt_seconds = 0.0;
@@ -90,6 +91,10 @@ public:
         const DitDenoiseStepCallback& on_step = {}
     ) const;
     VaeDecodeResult decode_vae(const HostTensor& packed_latent) const;
+    VaeDecodeResult decode_vae(
+        const HostTensor& packed_latent,
+        const ImageGeometry& geometry
+    ) const;
 
     // Stable full-generation API. Reference mode preserves the official
     // seed=42 boundary; portable mode supports explicit arbitrary seeds.

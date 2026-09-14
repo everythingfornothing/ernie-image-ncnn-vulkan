@@ -79,7 +79,23 @@ HostTensor prepare_vae_decoder_input(
     const std::vector<float>& running_mean,
     const std::vector<float>& running_var
 ) {
-    validate_latent_tensor(packed_latent);
+    return prepare_vae_decoder_input(
+        packed_latent,
+        running_mean,
+        running_var,
+        make_image_geometry(kImageWidth, kImageHeight)
+    );
+}
+
+HostTensor prepare_vae_decoder_input(
+    const HostTensor& packed_latent,
+    const std::vector<float>& running_mean,
+    const std::vector<float>& running_var,
+    const ImageGeometry& geometry
+) {
+    const ImageGeometry checked =
+        make_image_geometry(geometry.width, geometry.height);
+    validate_latent_tensor(packed_latent, checked);
     if (
         running_mean.size() != kPackedChannels ||
         running_var.size() != kPackedChannels
@@ -102,9 +118,10 @@ HostTensor prepare_vae_decoder_input(
     }
 
     const std::size_t packed_plane =
-        static_cast<std::size_t>(kLatentHeight) * kLatentWidth;
+        static_cast<std::size_t>(checked.image_tokens);
     const std::size_t vae_plane =
-        static_cast<std::size_t>(kVaeLatentHeight) * kVaeLatentWidth;
+        static_cast<std::size_t>(checked.vae_latent_height) *
+        checked.vae_latent_width;
     std::vector<float> output(
         static_cast<std::size_t>(kVaeLatentChannels) * vae_plane
     );
@@ -122,18 +139,19 @@ HostTensor prepare_vae_decoder_input(
                 const float standard = standard_deviation[
                     static_cast<std::size_t>(packed_channel)
                 ];
-                for (int y = 0; y < kLatentHeight; ++y) {
-                    for (int x = 0; x < kLatentWidth; ++x) {
+                for (int y = 0; y < checked.packed_height; ++y) {
+                    for (int x = 0; x < checked.packed_width; ++x) {
                         const std::size_t source =
                             static_cast<std::size_t>(packed_channel) *
                                 packed_plane +
-                            static_cast<std::size_t>(y) * kLatentWidth + x;
+                            static_cast<std::size_t>(y) *
+                                checked.packed_width + x;
                         const int output_y = y * 2 + patch_y;
                         const int output_x = x * 2 + patch_x;
                         const std::size_t destination =
                             static_cast<std::size_t>(channel) * vae_plane +
                             static_cast<std::size_t>(output_y) *
-                                kVaeLatentWidth +
+                                checked.vae_latent_width +
                             output_x;
                         output[destination] = input[source] * standard + mean;
                     }
@@ -146,11 +164,11 @@ HostTensor prepare_vae_decoder_input(
     result.shape = {
         kBatchSize,
         kVaeLatentChannels,
-        kVaeLatentHeight,
-        kVaeLatentWidth,
+        checked.vae_latent_height,
+        checked.vae_latent_width,
     };
     result.storage = std::move(output);
-    validate_vae_latent_tensor(result);
+    validate_vae_latent_tensor(result, checked);
     return result;
 }
 
@@ -177,12 +195,24 @@ DynamicVaeDecoder::DynamicVaeDecoder(
 VaeDecodeResult DynamicVaeDecoder::decode(
     const HostTensor& packed_latent
 ) const {
+    return decode(
+        packed_latent,
+        make_image_geometry(kImageWidth, kImageHeight)
+    );
+}
+
+VaeDecodeResult DynamicVaeDecoder::decode(
+    const HostTensor& packed_latent,
+    const ImageGeometry& geometry
+) const {
     const auto total_started = std::chrono::steady_clock::now();
+    const ImageGeometry checked =
+        make_image_geometry(geometry.width, geometry.height);
     VaeDecodeResult result;
 
     auto started = std::chrono::steady_clock::now();
     result.decoder_input = prepare_vae_decoder_input(
-        packed_latent, running_mean_, running_var_
+        packed_latent, running_mean_, running_var_, checked
     );
     result.preprocess_seconds = elapsed_seconds(started);
 
@@ -196,7 +226,7 @@ VaeDecodeResult DynamicVaeDecoder::decode(
     result.decoder_output = decoder.run_positional({result.decoder_input});
     result.inference_seconds = elapsed_seconds(started);
     const std::vector<int> expected_output = {
-        kBatchSize, 3, kImageHeight, kImageWidth,
+        kBatchSize, 3, checked.height, checked.width,
     };
     if (result.decoder_output.shape != expected_output) {
         throw std::runtime_error(

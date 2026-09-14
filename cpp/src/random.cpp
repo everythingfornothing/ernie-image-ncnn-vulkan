@@ -79,15 +79,18 @@ float round_float_to_bf16_rne(float value) {
     return value;
 }
 
-std::vector<float> make_portable_latent(std::uint64_t seed) {
+std::vector<float> make_portable_latent(
+    std::uint64_t seed,
+    std::size_t element_count
+) {
     std::vector<float> values;
-    values.reserve(kLatentElements);
+    values.reserve(element_count);
     const PhiloxKey key = {
         static_cast<std::uint32_t>(seed),
         static_cast<std::uint32_t>(seed >> 32U),
     };
 
-    for (std::uint64_t block = 0; values.size() < kLatentElements; ++block) {
+    for (std::uint64_t block = 0; values.size() < element_count; ++block) {
         const PhiloxCounter random = philox4x32_10(
             {
                 static_cast<std::uint32_t>(block),
@@ -107,7 +110,7 @@ std::vector<float> make_portable_latent(std::uint64_t seed) {
                 radius * std::sin(angle),
             };
             for (double sample : normal) {
-                if (values.size() == kLatentElements) {
+                if (values.size() == element_count) {
                     break;
                 }
                 values.push_back(round_float_to_bf16_rne(
@@ -170,7 +173,24 @@ InitialLatentResult InitialLatentProvider::create(
     std::uint64_t seed,
     InitialLatentMode mode
 ) const {
+    return create(
+        seed,
+        mode,
+        make_image_geometry(kImageWidth, kImageHeight)
+    );
+}
+
+InitialLatentResult InitialLatentProvider::create(
+    std::uint64_t seed,
+    InitialLatentMode mode,
+    const ImageGeometry& geometry
+) const {
     const auto started = std::chrono::steady_clock::now();
+    const ImageGeometry checked =
+        make_image_geometry(geometry.width, geometry.height);
+    const std::size_t element_count =
+        static_cast<std::size_t>(kBatchSize) * kLatentChannels *
+        static_cast<std::size_t>(checked.image_tokens);
     std::vector<float> values;
     std::string policy;
 
@@ -180,12 +200,20 @@ InitialLatentResult InitialLatentProvider::create(
                 "reference RNG mode supports only seed=42"
             );
         }
+        if (
+            checked.width != kImageWidth ||
+            checked.height != kImageHeight
+        ) {
+            throw std::invalid_argument(
+                "reference RNG mode supports only resolution 1024x1024"
+            );
+        }
         if (!host_is_little_endian()) {
             throw std::runtime_error(
                 "official seed=42 latent asset requires a little-endian host"
             );
         }
-        values.resize(kLatentElements);
+        values.resize(element_count);
         std::ifstream stream(seed42_asset_, std::ios::binary);
         stream.read(
             reinterpret_cast<char*>(values.data()),
@@ -199,14 +227,14 @@ InitialLatentResult InitialLatentProvider::create(
         }
         policy = kOfficialReferenceLatentPolicy;
     } else if (mode == InitialLatentMode::PortablePhilox) {
-        values = make_portable_latent(seed);
+        values = make_portable_latent(seed, element_count);
         policy = kPortableLatentPolicy;
     } else {
         throw std::invalid_argument("unknown initial latent RNG mode");
     }
 
     InitialLatentResult result;
-    result.latent = make_latent_tensor(std::move(values));
+    result.latent = make_latent_tensor(std::move(values), checked);
     result.seed = seed;
     result.mode = mode;
     result.policy = std::move(policy);

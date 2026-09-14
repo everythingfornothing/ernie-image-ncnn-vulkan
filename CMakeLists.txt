@@ -115,5 +115,43 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endforeach()
 endif()
 
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(ernie_image_foundation_tests
+        cpp/tests/foundation_tests.cpp
+    )
+    target_include_directories(ernie_image_foundation_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/cpp/src
+    )
+    target_link_libraries(ernie_image_foundation_tests PRIVATE
+        ernie_image_pipeline
+    )
+    target_compile_features(ernie_image_foundation_tests PRIVATE cxx_std_17)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(ernie_image_foundation_tests PRIVATE
+            -Wall -Wextra -Wpedantic -ffp-contract=off
+        )
+    endif()
+    add_test(
+        NAME ernie_image_foundation_tests
+        COMMAND ernie_image_foundation_tests
+    )
+
+    # Manual model-backed acceptance driver. It is intentionally not a CTest:
+    # the normal test suite remains lightweight and does not require weights.
+    add_executable(ernie_image_dynamic_acceptance
+        cpp/tests/dynamic_resolution_acceptance.cpp
+    )
+    target_link_libraries(ernie_image_dynamic_acceptance PRIVATE
+        ernie_image_pipeline
+    )
+    target_compile_features(ernie_image_dynamic_acceptance PRIVATE cxx_std_17)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(ernie_image_dynamic_acceptance PRIVATE
+            -Wall -Wextra -Wpedantic -ffp-contract=off
+        )
+    endif()
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS ernie_image_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -181,7 +181,16 @@ DitRuntimeTensors make_dit_runtime_tensors(
     if (image_height_tokens <= 0 || image_width_tokens <= 0) {
         throw std::invalid_argument("image token dimensions must be positive");
     }
+    if (
+        image_height_tokens >
+        std::numeric_limits<int>::max() / image_width_tokens
+    ) {
+        throw std::overflow_error("image token count overflow");
+    }
     const int image_tokens = image_height_tokens * image_width_tokens;
+    if (image_tokens > std::numeric_limits<int>::max() - text_length) {
+        throw std::overflow_error("DiT sequence length overflow");
+    }
     const int sequence_length = image_tokens + text_length;
     DitRuntimeTensors result;
     result.text_length = text_length;

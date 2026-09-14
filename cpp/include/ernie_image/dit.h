@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ernie_image/latent.h"
 #include "ernie_image/model_layout.h"
 #include "ernie_image/ncnn_runner.h"
 #include "ernie_image/runtime.h"
@@ -29,9 +30,11 @@ struct DitFrontendInputs {
     HostTensor latent;
     HostTensor timestep;
     HostTensor text_embeddings;
+    ImageGeometry geometry = make_image_geometry(kImageWidth, kImageHeight);
 };
 
 struct DitFrontendOutputs {
+    ImageGeometry geometry = make_image_geometry(kImageWidth, kImageHeight);
     int text_length = 0;
     int sequence_length = 0;
     HostTensor image_tokens;
@@ -56,6 +59,7 @@ using DitChunkCallback =
     std::function<void(const DitStageTiming&, const HostTensor&)>;
 
 struct DitPredictResult {
+    ImageGeometry geometry = make_image_geometry(kImageWidth, kImageHeight);
     int text_length = 0;
     int sequence_length = 0;
     HostTensor prediction;
@@ -68,6 +72,7 @@ struct DitDenoiseInputs {
     // resume it is the previous step's output sample.
     HostTensor initial_sample;
     HostTensor text_embeddings;
+    ImageGeometry geometry = make_image_geometry(kImageWidth, kImageHeight);
     int start_step = 0;
     int num_inference_steps = kNumInferenceSteps;
 };
@@ -87,6 +92,7 @@ struct DitDenoiseStepResult {
 };
 
 struct DitDenoiseResult {
+    ImageGeometry geometry = make_image_geometry(kImageWidth, kImageHeight);
     int text_length = 0;
     int sequence_length = 0;
     int start_step = 0;

@@ -27,21 +27,25 @@ void validate_rgb_image(const RgbImage& image) {
 }
 
 RgbImage postprocess_vae_output(const HostTensor& decoder_output) {
-    const std::vector<int> expected_shape = {
-        1, 3, kImageHeight, kImageWidth,
-    };
-    if (decoder_output.shape != expected_shape) {
+    if (
+        decoder_output.shape.size() != 4 ||
+        decoder_output.shape[0] != 1 ||
+        decoder_output.shape[1] != 3
+    ) {
         throw std::invalid_argument(
-            "VAE decoder output must have shape [1,3,1024,1024]"
+            "VAE decoder output must have shape [1,3,H,W]"
         );
     }
+    const int height = decoder_output.shape[2];
+    const int width = decoder_output.shape[3];
+    const ImageGeometry geometry = make_image_geometry(width, height);
     const auto* values =
         std::get_if<std::vector<float>>(&decoder_output.storage);
     if (values == nullptr) {
         throw std::invalid_argument("VAE decoder output must be FP32");
     }
     const std::size_t plane =
-        static_cast<std::size_t>(kImageHeight) * kImageWidth;
+        static_cast<std::size_t>(geometry.height) * geometry.width;
     if (values->size() != plane * 3) {
         throw std::invalid_argument(
             "VAE decoder output element count is invalid"
@@ -49,13 +53,13 @@ RgbImage postprocess_vae_output(const HostTensor& decoder_output) {
     }
 
     RgbImage image;
-    image.width = kImageWidth;
-    image.height = kImageHeight;
+    image.width = geometry.width;
+    image.height = geometry.height;
     image.pixels.resize(plane * 3);
-    for (int y = 0; y < kImageHeight; ++y) {
-        for (int x = 0; x < kImageWidth; ++x) {
+    for (int y = 0; y < geometry.height; ++y) {
+        for (int x = 0; x < geometry.width; ++x) {
             const std::size_t pixel =
-                static_cast<std::size_t>(y) * kImageWidth + x;
+                static_cast<std::size_t>(y) * geometry.width + x;
             for (int channel = 0; channel < 3; ++channel) {
                 const float value =
                     (*values)[static_cast<std::size_t>(channel) * plane + pixel];

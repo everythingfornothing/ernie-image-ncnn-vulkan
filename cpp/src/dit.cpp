@@ -125,11 +125,12 @@ void require_contract(
 HostTensor make_joint_tokens(
     const HostTensor& image_tokens,
     const HostTensor& text_tokens,
-    int text_length
+    int text_length,
+    int image_token_count
 ) {
     require_fp32(
         image_tokens,
-        {1, kImageTokens, kDitHiddenSize},
+        {1, image_token_count, kDitHiddenSize},
         "DiT image tokens"
     );
     require_fp32(
@@ -154,9 +155,45 @@ HostTensor make_joint_tokens(
     );
 
     HostTensor joint;
-    joint.shape = {1, kImageTokens + text_length, kDitHiddenSize};
+    joint.shape = {1, image_token_count + text_length, kDitHiddenSize};
     joint.storage = std::move(values);
     return joint;
+}
+
+HostTensor unpack_output_head_prediction(
+    HostTensor projected_tokens,
+    int sequence_length,
+    const ImageGeometry& geometry
+) {
+    const std::vector<int> packed_shape =
+        geometry.dit_packed_latent_shape();
+    if (projected_tokens.shape == packed_shape) {
+        // Compatibility with the original fixed 1024x1024 output-head graph.
+        validate_latent_tensor(projected_tokens, geometry);
+        return projected_tokens;
+    }
+
+    require_fp32(
+        projected_tokens,
+        {1, sequence_length, kLatentChannels},
+        "DiT projected output tokens"
+    );
+    const auto& projected =
+        std::get<std::vector<float>>(projected_tokens.storage);
+    std::vector<float> packed(
+        static_cast<std::size_t>(kLatentChannels) * geometry.image_tokens
+    );
+    for (int token = 0; token < geometry.image_tokens; ++token) {
+        for (int channel = 0; channel < kLatentChannels; ++channel) {
+            packed[
+                static_cast<std::size_t>(channel) * geometry.image_tokens +
+                token
+            ] = projected[
+                static_cast<std::size_t>(token) * kLatentChannels + channel
+            ];
+        }
+    }
+    return make_latent_tensor(std::move(packed), geometry);
 }
 
 HostTensor make_runtime_tensor(
@@ -223,7 +260,10 @@ std::string chunk_name(const LayerChunkModelFiles& chunk) {
 DitFrontendOutputs DynamicDitModel::run_frontend(
     DitFrontendInputs inputs
 ) const {
-    validate_latent_tensor(inputs.latent);
+    const ImageGeometry geometry = make_image_geometry(
+        inputs.geometry.width, inputs.geometry.height
+    );
+    validate_latent_tensor(inputs.latent, geometry);
     require_fp32(inputs.timestep, {1, 1}, "DiT timestep");
     if (
         inputs.text_embeddings.shape.size() != 3 ||
@@ -287,7 +327,7 @@ DitFrontendOutputs DynamicDitModel::run_frontend(
 
     require_fp32(
         outputs[0],
-        {1, kImageTokens, kDitHiddenSize},
+        {1, geometry.image_tokens, kDitHiddenSize},
         "DiT image tokens"
     );
     require_fp32(
@@ -309,8 +349,9 @@ DitFrontendOutputs DynamicDitModel::run_frontend(
     );
 
     DitFrontendOutputs result;
+    result.geometry = geometry;
     result.text_length = text_length;
-    result.sequence_length = kImageTokens + text_length;
+    result.sequence_length = geometry.image_tokens + text_length;
     result.image_tokens = std::move(outputs[0]);
     result.text_tokens = std::move(outputs[1]);
     for (int index = 0; index < kDitAdaLnInputCount; ++index) {
@@ -331,8 +372,10 @@ DitPredictResult DynamicDitModel::predict(
     DitFrontendOutputs frontend = run_frontend(std::move(inputs));
     const int text_length = frontend.text_length;
     const int sequence_length = frontend.sequence_length;
+    const ImageGeometry geometry = frontend.geometry;
 
     DitPredictResult result;
+    result.geometry = geometry;
     result.text_length = text_length;
     result.sequence_length = sequence_length;
     result.stages.reserve(2 + model_files_.chunks.size());
@@ -349,7 +392,8 @@ DitPredictResult DynamicDitModel::predict(
     HostTensor joint = make_joint_tokens(
         frontend.image_tokens,
         frontend.text_tokens,
-        text_length
+        text_length,
+        geometry.image_tokens
     );
     require_fp32(
         joint,
@@ -360,7 +404,11 @@ DitPredictResult DynamicDitModel::predict(
     frontend.text_tokens = HostTensor();
 
     const DitRuntimeTensors runtime =
-        make_dit_runtime_tensors(text_length);
+        make_dit_runtime_tensors(
+            text_length,
+            geometry.packed_height,
+            geometry.packed_width
+        );
     HostTensor rotary = make_runtime_tensor(
         {1, sequence_length, 1, kDitHeadDim},
         runtime.rotary_frequencies
@@ -433,12 +481,15 @@ DitPredictResult DynamicDitModel::predict(
     head_inputs.push_back(std::move(joint));
     head_inputs.push_back(std::move(frontend.conditioning));
     started = std::chrono::steady_clock::now();
-    result.prediction =
-        run_out0_positional(output_head, std::move(head_inputs));
+    result.prediction = unpack_output_head_prediction(
+        run_out0_positional(output_head, std::move(head_inputs)),
+        sequence_length,
+        geometry
+    );
     const double head_inference_seconds = elapsed_seconds(started);
     require_fp32(
         result.prediction,
-        {1, kLatentChannels, kLatentHeight, kLatentWidth},
+        geometry.dit_packed_latent_shape(),
         "DiT prediction"
     );
     result.stages.push_back({
@@ -470,7 +521,10 @@ DitDenoiseResult DynamicDitModel::denoise(
             "DiT denoise start_step must be in [0,8]"
         );
     }
-    validate_latent_tensor(inputs.initial_sample);
+    const ImageGeometry geometry = make_image_geometry(
+        inputs.geometry.width, inputs.geometry.height
+    );
+    validate_latent_tensor(inputs.initial_sample, geometry);
     if (
         inputs.text_embeddings.shape.size() != 3 ||
         inputs.text_embeddings.shape[0] != 1 ||
@@ -499,8 +553,9 @@ DitDenoiseResult DynamicDitModel::denoise(
     const HostTensor text_embeddings = std::move(inputs.text_embeddings);
 
     DitDenoiseResult result;
+    result.geometry = geometry;
     result.text_length = text_length;
-    result.sequence_length = kImageTokens + text_length;
+    result.sequence_length = geometry.image_tokens + text_length;
     result.start_step = inputs.start_step;
     result.num_inference_steps = inputs.num_inference_steps;
     result.steps.reserve(static_cast<std::size_t>(
@@ -522,6 +577,7 @@ DitDenoiseResult DynamicDitModel::denoise(
             ]
         };
         predict_inputs.text_embeddings = text_embeddings;
+        predict_inputs.geometry = geometry;
 
         DitPredictResult prediction = predict(std::move(predict_inputs));
         const auto scheduler_started = std::chrono::steady_clock::now();
@@ -538,11 +594,9 @@ DitDenoiseResult DynamicDitModel::denoise(
         const double scheduler_seconds = elapsed_seconds(scheduler_started);
 
         HostTensor next_sample;
-        next_sample.shape = {
-            1, kLatentChannels, kLatentHeight, kLatentWidth
-        };
+        next_sample.shape = geometry.dit_packed_latent_shape();
         next_sample.storage = std::move(next_values);
-        validate_latent_tensor(next_sample);
+        validate_latent_tensor(next_sample, geometry);
 
         DitDenoiseStepResult step;
         step.step_index = index;
@@ -569,7 +623,7 @@ DitDenoiseResult DynamicDitModel::denoise(
     }
 
     result.final_sample = std::move(sample);
-    validate_latent_tensor(result.final_sample);
+    validate_latent_tensor(result.final_sample, geometry);
     result.total_seconds = elapsed_seconds(total_started);
     return result;
 }

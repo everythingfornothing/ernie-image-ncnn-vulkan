@@ -64,7 +64,24 @@ inline ncnn::Mat to_ncnn_mat(const HostTensor& tensor) {
         [&result, count](const auto& values) {
             using Value = typename std::decay_t<decltype(values)>::value_type;
             static_assert(sizeof(Value) == 4, "ncnn adapter requires 4-byte values");
-            std::memcpy(result.data, values.data(), count * sizeof(Value));
+            if (result.dims <= 2) {
+                std::memcpy(result.data, values.data(), count * sizeof(Value));
+                return;
+            }
+
+            // ncnn may align each channel to a larger cstep than the logical
+            // w * h * d plane. Copying the compact HostTensor storage as one
+            // block would put subsequent channels into that padding.
+            const std::size_t plane =
+                static_cast<std::size_t>(result.w) * result.h * result.d;
+            for (int channel = 0; channel < result.c; ++channel) {
+                ncnn::Mat destination = result.channel(channel);
+                std::memcpy(
+                    destination.data,
+                    values.data() + static_cast<std::size_t>(channel) * plane,
+                    plane * sizeof(Value)
+                );
+            }
         },
         tensor.storage
     );

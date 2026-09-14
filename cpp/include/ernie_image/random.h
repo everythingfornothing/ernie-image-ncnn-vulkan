@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ernie_image/latent.h"
 #include "ernie_image/ncnn_runner.h"
 
 #include <cstdint>
@@ -41,6 +42,11 @@ public:
     InitialLatentResult create(
         std::uint64_t seed,
         InitialLatentMode mode = InitialLatentMode::OfficialReference
+    ) const;
+    InitialLatentResult create(
+        std::uint64_t seed,
+        InitialLatentMode mode,
+        const ImageGeometry& geometry
     ) const;
     const std::filesystem::path& seed42_asset() const noexcept;
 

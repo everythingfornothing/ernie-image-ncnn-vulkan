@@ -20,6 +20,8 @@ struct Arguments {
     std::string generation_prompt;
     std::filesystem::path output_path;
     std::uint64_t seed = 42;
+    int width = 1024;
+    int height = 1024;
     ernie_image::InitialLatentMode rng_mode =
         ernie_image::InitialLatentMode::OfficialReference;
     bool encode = false;
@@ -35,14 +37,16 @@ void print_usage() {
         << "  ernie_image_cli --model-dir DIR [backend options] --encode PROMPT\n"
         << "  ernie_image_cli --model-dir DIR [backend options] --prompt PROMPT "
         << "--output IMAGE.png [--rng-mode reference|portable] "
-        << "[--seed SEED]\n\n"
+        << "[--seed SEED] [--width W] [--height H]\n\n"
         << "Backend defaults to CPU; the first Vulkan path is FP32 only.\n"
         << "Without a prompt option, validates the deployment model layout.\n"
         << "--encode runs only the variable-length C++/ncnn Text Encoder.\n"
         << "--prompt runs Text Encoder -> initial latent -> eight-step "
         << "DiT/Scheduler -> VAE -> PNG. RNG mode defaults to reference, "
         << "which accepts only seed=42. Arbitrary seeds require "
-        << "--rng-mode portable.\n";
+        << "--rng-mode portable. Width and height default to 1024 and must "
+        << "both be positive multiples of 16. Dynamic resolutions require "
+        << "portable RNG mode.\n";
 }
 
 std::uint64_t parse_seed(const std::string& text) {
@@ -122,6 +126,20 @@ Arguments parse_arguments(int argc, char** argv) {
                 throw std::invalid_argument("--seed requires a value");
             }
             result.seed = parse_seed(argv[index]);
+            continue;
+        }
+        if (argument == "--width") {
+            if (++index >= argc) {
+                throw std::invalid_argument("--width requires a value");
+            }
+            result.width = std::stoi(argv[index]);
+            continue;
+        }
+        if (argument == "--height") {
+            if (++index >= argc) {
+                throw std::invalid_argument("--height requires a value");
+            }
+            result.height = std::stoi(argv[index]);
             continue;
         }
         if (argument == "--rng-mode") {
@@ -234,6 +252,8 @@ int main(int argc, char** argv) {
             request.output_path = arguments.output_path;
             request.config.seed = arguments.seed;
             request.config.initial_latent_mode = arguments.rng_mode;
+            request.config.width = arguments.width;
+            request.config.height = arguments.height;
 
             const auto report_step = [](
                 const ernie_image::DitDenoiseStepResult& step
@@ -262,6 +282,7 @@ int main(int argc, char** argv) {
             std::cout << "initial_latent_policy="
                       << result.initial_latent_policy << '\n';
             std::cout << "text_length=" << result.text_length << '\n';
+            std::cout << "image_tokens=" << result.image_tokens << '\n';
             std::cout << "sequence_length=" << result.sequence_length << '\n';
             std::cout << "completed_steps="
                       << result.num_inference_steps << '\n';

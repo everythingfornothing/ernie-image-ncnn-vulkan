@@ -10,10 +10,11 @@
 
 | 能力 | 实现方式 |
 |---|---|
-| 本地文生图 | 接收中文、英文、日文等 UTF-8 提示词，输出 1024×1024 RGB 图像 |
+| 本地文生图 | 接收中文、英文、日文等 UTF-8 提示词，输出 RGB PNG |
 | 双后端执行 | 同一套 C++ Pipeline 可选择 ncnn CPU 或 Vulkan 后端 |
 | Vulkan 推理 | 支持指定 GPU，并启用 ncnn packing layout |
 | 动态 Prompt | 根据实际 token 数在运行时构造 RoPE、Attention Mask 和联合序列 |
+| 动态分辨率 | 运行时生成 latent、图像 token、RoPE 和 VAE shape，宽高可分别设置 |
 | 可重复生成 | 提供官方 seed=42 reference 模式和支持任意 seed 的 portable 模式 |
 | Turbo 去噪 | 按官方 FlowMatch 配置执行 8 个去噪步骤 |
 | 完整 C++ 链路 | 串联 Tokenizer、Text Encoder、DiT、Scheduler、VAE 和 PNG 写出 |
@@ -116,8 +117,26 @@ mkdir -p outputs
   --threads 16 \
   --rng-mode portable \
   --seed 123 \
+  --width 1024 \
+  --height 1024 \
   --prompt '一只黑白相间的中华田园犬在草地上奔跑' \
   --output outputs/dog.png
+```
+
+生成横向图片时，只需在同一条命令中修改宽高：
+
+```bash
+./build/ernie_image_cli \
+  --model-dir models/ernie-image-turbo \
+  --device vulkan \
+  --gpu-index 0 \
+  --threads 16 \
+  --rng-mode portable \
+  --seed 123 \
+  --width 1376 \
+  --height 768 \
+  --prompt '一只黑白相间的中华田园犬在草地上奔跑' \
+  --output outputs/dog_1376x768.png
 ```
 
 ### CPU 模式
@@ -129,6 +148,8 @@ mkdir -p outputs
   --threads 16 \
   --rng-mode portable \
   --seed 123 \
+  --width 1024 \
+  --height 1024 \
   --prompt '一只黑白相间的中华田园犬在草地上奔跑' \
   --output outputs/dog_cpu.png
 ```
@@ -142,11 +163,15 @@ mkdir -p outputs
   --gpu-index 0 \
   --rng-mode reference \
   --seed 42 \
+  --width 1024 \
+  --height 1024 \
   --prompt '一只黑白相间的中华田园犬' \
   --output outputs/reference_seed42.png
 ```
 
-`reference` 模式用于官方 seed=42 回归；`portable` 模式接受任意无符号整数 seed，并保证当前 C++ 实现跨运行可重复。
+`reference` 模式只用于官方 1024×1024、seed=42 回归，不对 reference latent 进行缩放或裁剪。`portable` 模式接受任意无符号整数 seed，并保证当前 C++ 实现跨运行可重复；使用动态分辨率时必须选择该模式。
+
+图片宽高默认为 1024×1024，必须为正数且均为 16 的倍数。当前发布版本已完整验收 1024×1024、1376×768、768×1376 和 528×784；所有尺寸复用同一套模型权重。
 
 ## 🔍 其他用法
 
@@ -186,6 +211,8 @@ mkdir -p outputs
 | `--output FILE.png` | 指定输出 PNG 文件 |
 | `--rng-mode reference\|portable` | 选择初始噪声策略 |
 | `--seed N` | 设置随机种子 |
+| `--width W` | 设置输出宽度，默认 1024，必须为 16 的正整数倍 |
+| `--height H` | 设置输出高度，默认 1024，必须为 16 的正整数倍 |
 | `--encode TEXT` | 只运行 Tokenizer 和 Text Encoder |
 
 ## 📄 许可证
