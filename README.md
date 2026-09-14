@@ -1,66 +1,45 @@
-# ERNIE-Image-Turbo ncnn
+# ERNIE-Image-Vulkan
 
-这是 [`baidu/ERNIE-Image-Turbo`](https://huggingface.co/baidu/ERNIE-Image-Turbo)
-的实验性 C++/ncnn 移植，用于在 Linux 本地完成文生图推理。运行时同时支持
-ncnn CPU 与 Vulkan 后端；下载转换后的模型文件后，推理过程不依赖 Python。
+基于 [`baidu/ERNIE-Image-Turbo`](https://huggingface.co/baidu/ERNIE-Image-Turbo) 的 C++/ncnn 文生图实现，支持 ncnn CPU 与 Vulkan 后端。下载转换后的模型权重后，推理过程可在 Linux 环境中独立运行。
 
-本仓库包含 C++ 推理代码以及验收时实际使用的 ncnn 源码。FP32 部署模型约为
-43 GiB，因此转换后的权重通过独立的 Hugging Face 仓库发布，不存放在本代码
-仓库中。
+项目代码：<https://github.com/everythingfornothing/ernie-image-ncnn-vulkan>
 
-## 当前状态
+模型权重：<https://huggingface.co/Coderdw/ernie-image-ncnn-vulkan>
 
-已经跑通并验证的推理链路为：
+## 核心能力
 
-```text
-UTF-8 Prompt
-  -> C++ Tokenizer
-  -> ncnn Text Encoder
-  -> 动态文本长度、RoPE 和 Attention Mask
-  -> 8 x（ncnn DiT + C++ FlowMatch Scheduler）
-  -> ncnn VAE Decoder
-  -> 1024 x 1024 RGB PNG
+| 能力 | 实现方式 |
+|---|---|
+| 本地文生图 | 接收中文、英文、日文等 UTF-8 提示词，输出 1024×1024 RGB 图像 |
+| 双后端执行 | 同一套 C++ Pipeline 可选择 ncnn CPU 或 Vulkan 后端 |
+| Vulkan 推理 | 支持指定 GPU，并启用 ncnn packing layout |
+| 动态 Prompt | 根据实际 token 数在运行时构造 RoPE、Attention Mask 和联合序列 |
+| 可重复生成 | 提供官方 seed=42 reference 模式和支持任意 seed 的 portable 模式 |
+| Turbo 去噪 | 按官方 FlowMatch 配置执行 8 个去噪步骤 |
+| 完整 C++ 链路 | 串联 Tokenizer、Text Encoder、DiT、Scheduler、VAE 和 PNG 写出 |
+
+## 🧩 环境要求
+
+- Linux x86_64，推荐 Ubuntu 22.04
+- CMake 3.19 或更高版本
+- 支持 C++17 的 GCC 或 Clang
+- Ninja 或 Make
+- stable Rust toolchain，用于构建 tokenizers-cpp
+- libpng 开发库
+- Vulkan GPU、驱动和开发库（使用 Vulkan 模式时）
+
+## 🚀 快速开始
+
+### 1. 克隆代码
+
+```bash
+git clone https://github.com/everythingfornothing/ernie-image-ncnn-vulkan.git
+cd ernie-image-ncnn-vulkan
 ```
 
-当前验收范围：
+### 2. 安装依赖
 
-- 模型：ERNIE-Image-Turbo，关闭 Prompt Enhancer
-- Batch size：1
-- 分辨率：1024 x 1024
-- 推理步数：8
-- Guidance scale：1.0
-- 运行精度：FP32
-- 后端：ncnn CPU、ncnn Vulkan
-- 动态 Prompt：CPU 已验证 N=3、14、30、64、256、1024；Vulkan 端到端已验证
-  N=14 和 N=30
-- 验证平台：Ubuntu 22.04、GCC 11.4、RTX 4080 SUPER、NVIDIA Driver
-  580.105.08
-
-当前版本以正确性验证为目标。低精度 Vulkan、可变图像分辨率、batch > 1、
-Prompt Enhancer 和性能优化暂未纳入已验证范围。
-
-## 仓库结构
-
-```text
-.
-├── CMakeLists.txt
-├── cpp/
-│   ├── include/ernie_image/
-│   ├── src/
-│   └── tools/ernie_image_cli.cpp
-└── third_party/
-    ├── ncnn/
-    └── tokenizers-cpp/
-```
-
-仓库内的 ncnn 基于 tag `20260526`、commit
-`e54f7b1f88434e1d844ea0551b880a1cfb079ce1`，并包含本项目 Vulkan 验收所使用的
-exact GELU 与 SDPA `[1,S]` mask 广播修正。复现当前结果时不要在未验证的情况下
-替换为其他 ncnn 版本。
-
-## 环境依赖
-
-Ubuntu 22.04 安装命令：
+Ubuntu 22.04：
 
 ```bash
 sudo apt update
@@ -69,42 +48,39 @@ sudo apt install -y \
   curl ca-certificates
 ```
 
-`tokenizers-cpp` 的构建需要当前稳定版 Rust。Ubuntu 22.04 软件源中的 Rust 版本
-可能过旧，建议通过 [rustup](https://rustup.rs/) 安装 stable toolchain，并确认
-`cargo --version` 与 `rustc --version` 均可正常执行。首次编译时 Cargo 会下载
-Rust crate 依赖。
+安装 stable Rust toolchain：
 
-如需使用 Vulkan，请先安装可正常工作的 GPU 驱动，并确认以下命令能够识别目标
-GPU：
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+使用 Vulkan 时可以先检查设备：
 
 ```bash
 vulkaninfo --summary
 ```
 
-构建过程使用仓库内置的 glslang 源码，不要求单独安装 glslang 软件包。
-
-## 下载转换后的权重
-
-转换后的 FP32 权重发布在
-[`Coderdw/ernie-image-ncnn-vulkan`](https://huggingface.co/Coderdw/ernie-image-ncnn-vulkan)：
+### 3. 下载模型权重
 
 ```bash
 python3 -m pip install -U huggingface_hub
-export HF_REPO_ID="Coderdw/ernie-image-ncnn-vulkan"
-hf download "$HF_REPO_ID" --local-dir models/ernie-image-turbo
+hf download Coderdw/ernie-image-ncnn-vulkan \
+  --local-dir models/ernie-image-turbo
 ```
 
-下载目录中必须直接包含 `tokenizer/`、`text_encoder/`、`dit/`、`vae/` 和
-`rng/`，不能再额外嵌套一层目录。
+下载完成后的目录结构应为：
 
-## 编译
-
-克隆代码仓库：
-
-```bash
-git clone https://github.com/everythingfornothing/ernie-image-ncnn-vulkan.git
-cd ernie-image-ncnn-vulkan
+```text
+models/ernie-image-turbo/
+├── tokenizer/
+├── text_encoder/
+├── dit/
+├── vae/
+└── rng/
 ```
+
+### 4. 编译
 
 编译 Vulkan 版本：
 
@@ -115,7 +91,7 @@ cmake -S . -B build -G Ninja \
 cmake --build build --parallel
 ```
 
-只编译 CPU 版本：
+编译 CPU 版本：
 
 ```bash
 cmake -S . -B build-cpu -G Ninja \
@@ -124,7 +100,55 @@ cmake -S . -B build-cpu -G Ninja \
 cmake --build build-cpu --parallel
 ```
 
-## 运行
+构建过程使用仓库内置的 ncnn、glslang 和 tokenizers-cpp。
+
+## 🖼️ 生成图片
+
+### Vulkan 模式
+
+```bash
+mkdir -p outputs
+
+./build/ernie_image_cli \
+  --model-dir models/ernie-image-turbo \
+  --device vulkan \
+  --gpu-index 0 \
+  --threads 16 \
+  --rng-mode portable \
+  --seed 123 \
+  --prompt '一只黑白相间的中华田园犬在草地上奔跑' \
+  --output outputs/dog.png
+```
+
+### CPU 模式
+
+```bash
+./build-cpu/ernie_image_cli \
+  --model-dir models/ernie-image-turbo \
+  --device cpu \
+  --threads 16 \
+  --rng-mode portable \
+  --seed 123 \
+  --prompt '一只黑白相间的中华田园犬在草地上奔跑' \
+  --output outputs/dog_cpu.png
+```
+
+### 官方 seed=42 reference 模式
+
+```bash
+./build/ernie_image_cli \
+  --model-dir models/ernie-image-turbo \
+  --device vulkan \
+  --gpu-index 0 \
+  --rng-mode reference \
+  --seed 42 \
+  --prompt '一只黑白相间的中华田园犬' \
+  --output outputs/reference_seed42.png
+```
+
+`reference` 模式用于官方 seed=42 回归；`portable` 模式接受任意无符号整数 seed，并保证当前 C++ 实现跨运行可重复。
+
+## 🔍 其他用法
 
 检查模型目录和 Vulkan 设备：
 
@@ -132,11 +156,10 @@ cmake --build build-cpu --parallel
 ./build/ernie_image_cli \
   --model-dir models/ernie-image-turbo \
   --device vulkan \
-  --gpu-index 0 \
-  --threads 16
+  --gpu-index 0
 ```
 
-只执行 Tokenizer 和 Text Encoder：
+只运行 Tokenizer 和 Text Encoder：
 
 ```bash
 ./build/ernie_image_cli \
@@ -145,49 +168,26 @@ cmake --build build-cpu --parallel
   --encode '一只黑白相间的中华田园犬'
 ```
 
-使用官方 seed=42 回归 latent 生成图片：
+查看命令行帮助：
 
 ```bash
-mkdir -p outputs
-./build/ernie_image_cli \
-  --model-dir models/ernie-image-turbo \
-  --device vulkan \
-  --gpu-index 0 \
-  --threads 16 \
-  --rng-mode reference \
-  --seed 42 \
-  --prompt '一只黑白相间的中华田园犬' \
-  --output outputs/seed42.png
+./build/ernie_image_cli --help
 ```
 
-使用任意可复现随机种子生成图片：
+主要参数：
 
-```bash
-./build/ernie_image_cli \
-  --model-dir models/ernie-image-turbo \
-  --device vulkan \
-  --rng-mode portable \
-  --seed 123 \
-  --prompt '一只黑白相间的中华田园犬在草地上奔跑' \
-  --output outputs/seed123.png
-```
+| 参数 | 说明 |
+|---|---|
+| `--model-dir DIR` | 转换后模型权重目录 |
+| `--device cpu\|vulkan` | 选择 CPU 或 Vulkan 后端 |
+| `--gpu-index N` | 指定 Vulkan GPU 索引 |
+| `--threads N` | 设置 CPU 线程数 |
+| `--prompt TEXT` | 输入 UTF-8 提示词 |
+| `--output FILE.png` | 指定输出 PNG 文件 |
+| `--rng-mode reference\|portable` | 选择初始噪声策略 |
+| `--seed N` | 设置随机种子 |
+| `--encode TEXT` | 只运行 Tokenizer 和 Text Encoder |
 
-将 `--device vulkan` 改为 `--device cpu` 即可使用 CPU 后端。
-
-`reference` 随机数模式只接受 seed=42，用于保持官方回归输入一致。其他 seed 必须
-使用 `portable` 模式。`portable` 模式能够跨运行复现，但不保证与 PyTorch CUDA
-随机数流逐字节一致。
-
-## 已验证结果
-
-| 案例 | 完成步数 | 总耗时 | CPU/Vulkan 图片 PSNR | 输出 |
-|---|---:|---:|---:|---|
-| N=14、seed=42、Vulkan | 8/8 | 408.27 s | 57.16 dB | 1024 x 1024 RGB |
-| N=30、seed=42、Vulkan | 8/8 | 424.25 s | 64.43 dB | 1024 x 1024 RGB |
-
-N=14 测试中，通过设备级采样得到的 GPU 峰值显存为 10,855 MiB。以上数据是
-正确性优先的基线，不代表完成性能优化后的结果。
-
-## 模型与第三方声明
+## 📄 许可证
 
 本项目遵循 [Apache-2.0 许可证](LICENSE)。
