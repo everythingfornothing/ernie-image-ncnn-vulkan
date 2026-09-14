@@ -15,7 +15,7 @@
 | Vulkan 推理 | 支持指定 GPU，并启用 ncnn packing layout |
 | 动态 Prompt | 根据实际 token 数在运行时构造 RoPE、Attention Mask 和联合序列 |
 | 动态分辨率 | 运行时生成 latent、图像 token、RoPE 和 VAE shape，宽高可分别设置 |
-| 可重复生成 | 提供官方 seed=42 reference 模式和支持任意 seed 的 portable 模式 |
+| 可重复生成 | 可以自选 seed 生成 |
 | Turbo 加速 | 使用 ERNIE-Image-Turbo，按官方 FlowMatch 配置仅需 8 个去噪步骤 |
 | 完整 C++ 链路 | 串联 Tokenizer、Text Encoder、DiT、Scheduler、VAE 和 PNG 写出 |
 
